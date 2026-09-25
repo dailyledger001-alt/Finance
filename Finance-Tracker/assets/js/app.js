@@ -353,9 +353,14 @@ ${dueHtml}
     if(page==='finance-budget')financePlanTab='budgets';if(page==='finance-savings')financePlanTab='goals';
     const spent=getCategorySpend(data),expenseCategories=data.categories.filter(x=>x.type==='expense'),
       monthName=new Date(`${financeMonth}-01T00:00:00`).toLocaleDateString(undefined,{month:'long',year:'numeric'});
-    const sourcePanel=`<section class="fx-card"><header class="fx-card-head"><div><h3>Income sources</h3><p class="fx-sub">Add each regular source of money once. It shows up on Transactions every month.</p></div></header>
+    const sourceReceived=new Set(financeMonthTransactions(data).filter(x=>x.sourceId).map(x=>x.sourceId));
+    const sourcePanel=`<section class="fx-card"><header class="fx-card-head"><div><h3>Income sources</h3><p class="fx-sub">Add each regular source of money once, then mark it received right here when it arrives.</p></div></header>
 <form id="source-form" class="fx-form-row" style="--cols:3"><label class="fx-field"><span>Name</span><input name="name" required placeholder="e.g. Salary" autocomplete="off"></label><label class="fx-field"><span>Monthly amount</span><input name="amount" type="number" inputmode="decimal" min="0.01" step="any" required placeholder="0"></label><label class="fx-field"><span>Day it arrives</span><input name="dayOfMonth" type="number" inputmode="numeric" min="1" max="31" value="1" required></label><button class="fx-btn fx-btn-primary">Add source</button></form>
-${data.incomeSources.length?`<ul class="fx-list">${data.incomeSources.map(x=>`<li class="fx-row"><span class="fx-row-main"><b>${esc(x.name)}</b><small>Arrives on day ${x.dayOfMonth} · ${x.active?'Active':'Paused'}</small></span><b class="fx-amt">${cash(x.amount)}</b><span class="fx-row-actions"><button class="fx-textbtn source-toggle" data-id="${x.id}">${x.active?'Pause':'Resume'}</button><button class="fx-textbtn is-danger source-delete" data-id="${x.id}">Remove</button></span></li>`).join('')}</ul>`:fxEmpty('No income sources yet','Add salary, business or any other monthly income above.')}</section>`;
+${data.incomeSources.length?`<ul class="fx-list">${data.incomeSources.map(x=>{
+  const received=x.active!==false&&sourceReceived.has(x.id);
+  const receiveBtn=x.active===false?'':received?'<span class="fx-chip is-paid">✓ Received</span>':`<button class="fx-btn fx-btn-small source-receive" data-id="${x.id}">Mark received</button>`;
+  return`<li class="fx-row"><span class="fx-row-main"><b>${esc(x.name)}</b><small>Arrives on day ${x.dayOfMonth} · ${x.active?'Active':'Paused'}</small></span><b class="fx-amt">${cash(x.amount)}</b><span class="fx-row-actions">${receiveBtn}<button class="fx-textbtn source-toggle" data-id="${x.id}">${x.active?'Pause':'Resume'}</button><button class="fx-textbtn is-danger source-delete" data-id="${x.id}">Remove</button></span></li>`;
+}).join('')}</ul>`:fxEmpty('No income sources yet','Add salary, business or any other monthly income above.')}</section>`;
     const budgetPanel=`<section class="fx-card"><header class="fx-card-head"><div><h3>Monthly budgets</h3><p class="fx-sub">Set a limit for a category. The same limit applies every month.</p></div></header>
 <form id="budget-form" class="fx-form-row" style="--cols:2"><label class="fx-field"><span>Category</span><select name="categoryId" required>${categoryOptions(data,'expense')}</select></label><label class="fx-field"><span>Monthly limit</span><input name="limit" type="number" inputmode="decimal" min="0.01" step="any" required placeholder="0"></label><button class="fx-btn fx-btn-primary">Save budget</button></form>
 ${data.budgets.length?`<ul class="fx-list">${data.budgets.map(x=>`<li class="fx-row fx-row-budget"><div class="fx-row-wide">${budgetUsageHtml(data.categories.find(c=>c.id===x.categoryId)?.name||'Unknown',spent[x.categoryId]||0,x.limit)}</div><span class="fx-row-actions"><button class="fx-textbtn is-danger budget-delete" data-id="${x.categoryId}">Remove</button></span></li>`).join('')}</ul><p class="fx-note">Spending shown for ${monthName}.</p>`:fxEmpty('No budgets yet','Pick a category and a limit above.')}
@@ -366,13 +371,25 @@ ${data.goals.length?`<ul class="fx-list">${data.goals.map(x=>{
   const saved=sum(data.transactions.filter(t=>t.goalId===x.id),'amount'),target=Math.max(1,Number(x.target)||1),left=Math.max(0,target-saved),pct=Math.min(100,Math.round(saved/target*100)),monthly=Number(x.monthly)||0,
     plan=saved>=target?'Goal reached':monthly>0?`Plan: ${cash(monthly)} a month · about ${Math.ceil(left/monthly)} months to go`:'No monthly plan';
   return`<li class="fx-goal"><div class="fx-bar-head"><b>${esc(x.name)}</b><span>${cash(saved)} of ${cash(target)}</span></div><div class="fx-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><i style="width:${pct}%"></i></div><div class="fx-goal-foot"><small>${esc(plan)} · ${pct}%</small><form class="deposit-form fx-deposit" data-id="${x.id}"><input name="amount" type="number" inputmode="decimal" min="0.01" step="any" placeholder="Amount" aria-label="Deposit amount" required><button class="fx-btn fx-btn-small">Add deposit</button></form><button type="button" class="fx-textbtn is-danger goal-delete" data-id="${x.id}">Remove</button></div></li>`}).join('')}</ul>`:fxEmpty('No savings goals yet','Add a goal above and start putting money towards it.')}</section>`;
-    const billPanel=`<section class="fx-card"><header class="fx-card-head"><div><h3>Bills</h3><p class="fx-sub">Add rent, internet and other regular bills once. Mark them paid on Overview.</p></div></header>
+    const billStatusList=getBillsStatus(data);
+    const billPanel=`<section class="fx-card"><header class="fx-card-head"><div><h3>Bills</h3><p class="fx-sub">Add rent, internet and other regular bills once, then mark them paid right here or from Overview.</p></div></header>
 <form id="bill-form" class="fx-form-row" style="--cols:4"><label class="fx-field"><span>Bill</span><input name="name" required placeholder="e.g. Rent" autocomplete="off"></label><label class="fx-field"><span>Amount</span><input name="amount" type="number" inputmode="decimal" min="0.01" step="any" required placeholder="0"></label><label class="fx-field"><span>Due day</span><input name="dueDay" type="number" inputmode="numeric" min="1" max="31" required placeholder="1–31"></label><label class="fx-field"><span>Category</span><select name="categoryId" required>${categoryOptions(data,'expense')}</select></label><button class="fx-btn fx-btn-primary">Add bill</button></form>
-${data.bills.length?`<ul class="fx-list">${data.bills.map(x=>`<li class="fx-row"><span class="fx-row-main"><b>${esc(x.name)}</b><small>Due on day ${x.dueDay} · ${x.active?'Active':'Paused'}</small></span><b class="fx-amt">${cash(x.amount)}</b><span class="fx-row-actions"><button class="fx-textbtn bill-toggle-active" data-id="${x.id}">${x.active?'Pause':'Resume'}</button><button class="fx-textbtn is-danger bill-delete" data-id="${x.id}">Remove</button></span></li>`).join('')}</ul>`:fxEmpty('No bills yet','Add your regular bills above.')}</section>`;
+${data.bills.length?`<ul class="fx-list">${data.bills.map(x=>{
+  const st=x.active!==false?billStatusList.find(b=>b.id===x.id):null;
+  const statusChip=st?`<span class="fx-chip is-${st.status.toLowerCase()}">${st.status==='Paid'?'✓ ':''}${st.status}</span>`:`<span class="fx-chip">Paused</span>`;
+  const payBtn=st&&st.status!=='Paid'?`<button class="fx-btn fx-btn-small bill-pay" data-id="${x.id}">Mark paid</button>`:'';
+  return`<li class="fx-row fx-row-bill"><span class="fx-row-main"><b>${esc(x.name)}</b><small>Due on day ${x.dueDay} · ${x.active?'Active':'Paused'}</small></span><b class="fx-amt">${cash(x.amount)}</b>${statusChip}<span class="fx-row-actions">${payBtn}<button class="fx-textbtn bill-toggle-active" data-id="${x.id}">${x.active?'Pause':'Resume'}</button><button class="fx-textbtn is-danger bill-delete" data-id="${x.id}">Remove</button></span></li>`;
+}).join('')}</ul>`:fxEmpty('No bills yet','Add your regular bills above.')}</section>`;
     document.getElementById('app').innerHTML=`<div class="fx-seg fx-seg-scroll" role="tablist" aria-label="Plan sections">${[['sources','Income'],['budgets','Budgets'],['goals','Savings'],['bills','Bills']].map(x=>`<button type="button" role="tab" data-plan-tab="${x[0]}" aria-selected="${financePlanTab===x[0]}" class="${financePlanTab===x[0]?'active':''}">${x[1]}</button>`).join('')}</div>${financePlanTab==='sources'?sourcePanel:financePlanTab==='budgets'?budgetPanel:financePlanTab==='goals'?goalPanel:billPanel}`;
     document.querySelectorAll('[data-plan-tab]').forEach(b=>b.onclick=()=>{financePlanTab=b.dataset.planTab;if(page!=='finance-setup')location.hash=routeByPage['finance-setup'].slice(1);else renderPage()});
     const sourceForm=document.getElementById('source-form');
     if(sourceForm)sourceForm.onsubmit=e=>{e.preventDefault();const fd=new FormData(e.target);data.incomeSources.push({id:uid(),name:String(fd.get('name')).trim(),amount:Number(fd.get('amount')),dayOfMonth:Number(fd.get('dayOfMonth')),active:true});saveFinanceData(data);toast('Income source added');renderPage()};
+    document.querySelectorAll('.source-receive').forEach(b=>b.onclick=()=>{
+      const x=data.incomeSources.find(i=>i.id===b.dataset.id),cat=data.categories.find(c=>c.type==='income');
+      const transaction={id:uid(),type:'income',amount:x.amount,date:monthDate(x.dayOfMonth),categoryId:cat.id,sourceId:x.id,sourceName:x.name,note:x.name};
+      data.transactions.push(transaction);saveFinanceData(data);renderPage();
+      undoToast('Income marked received',()=>{data.transactions=data.transactions.filter(t=>t.id!==transaction.id);saveFinanceData(data);renderPage()});
+    });
     document.querySelectorAll('.source-toggle').forEach(b=>b.onclick=()=>{const x=data.incomeSources.find(i=>i.id===b.dataset.id);x.active=!x.active;saveFinanceData(data);renderPage()});
     document.querySelectorAll('.source-delete').forEach(b=>b.onclick=()=>{
       const id=b.dataset.id,x=data.incomeSources.find(i=>i.id===id),linked=data.transactions.filter(t=>t.sourceId===id);
@@ -408,6 +425,11 @@ ${data.bills.length?`<ul class="fx-list">${data.bills.map(x=>`<li class="fx-row"
         data.bills.push({id:uid(),name,amount:Number(fd.get('amount')),dueDay,categoryId:fd.get('categoryId'),active:true});saveFinanceData(data);toast('Bill added');renderPage();
       };
     }
+    document.querySelectorAll('.bill-pay').forEach(b=>b.onclick=()=>{
+      const bill=data.bills.find(x=>x.id===b.dataset.id),transaction={id:uid(),type:'expense',amount:bill.amount,date:monthDate(Math.min(today.getDate(),bill.dueDay)),categoryId:bill.categoryId,billId:bill.id,billName:bill.name,note:bill.name};
+      data.transactions.push(transaction);saveFinanceData(data);renderPage();
+      undoToast('Bill marked paid',()=>{data.transactions=data.transactions.filter(x=>x.id!==transaction.id);saveFinanceData(data);renderPage()});
+    });
     document.querySelectorAll('.bill-toggle-active').forEach(b=>b.onclick=()=>{const x=data.bills.find(i=>i.id===b.dataset.id);x.active=!x.active;saveFinanceData(data);renderPage()});
     document.querySelectorAll('.bill-delete').forEach(b=>b.onclick=()=>{data.bills=data.bills.filter(x=>x.id!==b.dataset.id);saveFinanceData(data);renderPage()});
   }
